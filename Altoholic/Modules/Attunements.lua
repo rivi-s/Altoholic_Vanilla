@@ -104,7 +104,12 @@ function Altoholic:Attunements_Update()
 		itemButton:SetScript("OnEnter", Altoholic_Attunements_OnEnter)
 		itemButton:SetScript("OnLeave", function(self) AltoTooltip:Hide() end)
 		itemButton:SetScript("OnClick", Altoholic_Equipment_OnClick)
-		local tc = self.ClassInfo[ self.Classes[c.class] ].texcoord
+		-- An incomplete character record (no class ever set, e.g. a stub
+		-- entry) makes self.Classes[c.class] nil, and indexing
+		-- self.ClassInfo[nil] would crash the whole view -- same gap fixed
+		-- in Modules/Equipment.lua.
+		local classToken = self.Classes[c.class]
+		local tc = (classToken and self.ClassInfo[classToken].texcoord) or {0, 1, 0, 1}
 		local itemTexture = getglobal(itemName .. "IconTexture")
 		itemTexture:SetTexture(self.classicon);
 		itemTexture:SetTexCoord(tc[1], tc[2], tc[3], tc[4]);

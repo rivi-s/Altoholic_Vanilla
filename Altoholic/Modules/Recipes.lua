@@ -4,17 +4,22 @@ local V = Altoholic.vars
 local TEAL		= "|cFF00FF9A"
 
 function Altoholic:Recipes_Update()
-	local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]		-- current alt
+	local raw = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)		-- current alt
+	local profession = raw and raw.recipes and raw.recipes[V.CurrentProfession]
 	local VisibleLines = 14
 	local frame = "AltoRecipes"
 	local entry = frame.."Entry"
-	if c.recipes[V.CurrentProfession].ScanFailed then
-		getglobal("AltoholicFrame_Status"):SetText(L["No data: "] .. V.CurrentProfession .. L[" scan failed for "] .. ": |cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm)
+	local nameSuffix = ""
+	if V.CurrentLinkedAccount then
+		nameSuffix = " (" .. V.CurrentLinkedAccount .. ")"
+	end
+	if (not profession) or profession.ScanFailed then
+		getglobal("AltoholicFrame_Status"):SetText(L["No data: "] .. V.CurrentProfession .. L[" scan failed for "] .. ": |cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix)
 		getglobal("AltoholicFrame_Status"):Show()
 		self:ClearScrollFrame(getglobal(frame.."ScrollFrame"), entry, VisibleLines, 18)
 		return
 	else
-		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. V.CurrentProfession .. ": " .. V.CurrentProfessionLevel)
+		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. V.CurrentProfession .. ": " .. V.CurrentProfessionLevel)
 		getglobal("AltoholicFrame_Status"):Show()
 	end
 	local offset = FauxScrollFrame_GetOffset(getglobal(frame.."ScrollFrame"));
@@ -22,10 +27,10 @@ function Altoholic:Recipes_Update()
 	local VisibleCount = 0
 	local DrawGroup = true
 	local i=1
-    for line, s in pairs(c.recipes[V.CurrentProfession].list) do
+    for line, s in pairs(profession.list or {}) do
 		if (offset > 0) or (DisplayedCount >= VisibleLines) then		-- if the line will not be visible
 			if s.isHeader then													-- then keep track of counters
-				if s.isCollapsed == false then
+				if not s.isCollapsed then
 					DrawGroup = true
 				else
 					DrawGroup = false
@@ -38,7 +43,7 @@ function Altoholic:Recipes_Update()
 			end
 		else		-- line will be displayed
 			if s.isHeader then
-				if s.isCollapsed == false then
+				if not s.isCollapsed then
 					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up"); 
 					DrawGroup = true
 				else
@@ -132,21 +137,16 @@ end
 function Altoholic:Recipes_OnClick(button, id)
     local button = arg1
     if ( button == "LeftButton" ) and ( IsShiftKeyDown() ) then
+        local v = Altoholic.vars
+        local c = Altoholic:ResolveLinkedChar(v.CurrentFaction, v.CurrentRealm, v.CurrentLinkedAccount, v.CurrentAlt)
+        local profession = c and c.recipes and c.recipes[v.CurrentProfession]
+        local r = profession and profession.list
+        if not r then return end
+        local link = r[id] and r[id].link
+        if not link then return end
         if ( ChatFrameEditBox:IsShown() ) then
-            local v = Altoholic.vars
-            local c = Altoholic.db.account.data[v.CurrentFaction][v.CurrentRealm].char[v.CurrentAlt]
-            local r = c.recipes[v.CurrentProfession].list
-            if not r then return end
-            local link = r[id].link
-            if not link then return end
             ChatFrameEditBox:Insert(link);
         elseif (WIM_EditBoxInFocus) then
-            local v = Altoholic.vars
-            local c = Altoholic.db.account.data[v.CurrentFaction][v.CurrentRealm].char[v.CurrentAlt]
-            local r = c.recipes[v.CurrentProfession].list
-            if not r then return end
-            local link = r[id].link
-            if not link then return end
             WIM_EditBoxInFocus:Insert(link);
         end
     end
@@ -154,14 +154,15 @@ end
 
 function Altoholic:Recipes_OnEnter(self)
     local id = self:GetParent():GetID()
-    local c = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]
-    if c.recipes[V.CurrentProfession].list[id].isHeader then return end
+    local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
+    local profession = c and c.recipes and c.recipes[V.CurrentProfession]
+    local entry = profession and profession.list and profession.list[id]
+    if not entry or entry.isHeader then return end
     local itemLink = itemLink
     if V.CurrentProfession == "Enchanting" then
-        local enchantlink = c.recipes[V.CurrentProfession].list[id].link
-        itemLink = Altoholic:GetEnchantIDFromLink(tostring(enchantlink))
+        itemLink = Altoholic:GetEnchantIDFromLink(tostring(entry.link))
     else
-        local item = c.recipes[V.CurrentProfession].list[id].id
+        local item = entry.id
         if not item then item=16893 end
         _, itemLink = GetItemInfo(item)
     end

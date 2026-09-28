@@ -3,22 +3,27 @@ local V = Altoholic.vars
 local GREEN		= "|cFF00FF00"
 
 function Altoholic:Mail_Update()
-	local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]
+	local raw = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
+	local c = { mail = (raw and raw.mail) or {}, lastmailcheck = (raw and raw.lastmailcheck) or 0 }
 	local VisibleLines = 7
 	local frame = "AltoMail"
 	local entry = frame.."Entry"
+	local nameSuffix = ""
+	if V.CurrentLinkedAccount then
+		nameSuffix = " (" .. V.CurrentLinkedAccount .. ")"
+	end
 	if table.getn(c.mail) == 0 then
 		if c.lastmailcheck == 0 then
-			getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. L[" has not visited his/her mailbox yet"])
+			getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. L[" has not visited his/her mailbox yet"])
 		else
-			getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. L[" has no mail, last check "] .. self:GetDelayInDays(c.lastmailcheck).. L[" days ago"])
+			getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. L[" has no mail, last check "] .. self:GetDelayInDays(c.lastmailcheck).. L[" days ago"])
 		end
 		getglobal("AltoholicFrame_Status"):Show()
-		
+
 		self:ClearScrollFrame(getglobal(frame.."ScrollFrame"), entry, VisibleLines, 41)
 		return
 	else
-		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. L["Mailbox"])
+		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. L["Mailbox"])
 		getglobal("AltoholicFrame_Status"):Show()
 	end
 	local offset = FauxScrollFrame_GetOffset(getglobal(frame.."ScrollFrame"));

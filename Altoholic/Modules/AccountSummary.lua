@@ -9,6 +9,9 @@ local WHITE		= "|cFFFFFFFF"
 local GOLD		= "|cFFFFD700"
 local GREEN		= "|cFF00FF00"
 
+-- Character lookup for a row (local vs Link-synced) is shared with
+-- Modules/Containers.lua via Altoholic:ResolveLinkedChar (Modules/LinkSync.lua).
+
 function Altoholic:AccountSummary_Update()
 	local VisibleLines = 14
 	local frame = "AltoSummary"
@@ -21,14 +24,15 @@ function Altoholic:AccountSummary_Update()
 	local DisplayedCount = 0
 	local VisibleCount = 0
 	local DrawRealm
-	local CurrentFaction, CurrentRealm
+	local CurrentFaction, CurrentRealm, CurrentLinkedAccount
 	local i=1
 	for line, s in pairs(self.CharacterInfo) do
 		if (offset > 0) or (DisplayedCount >= VisibleLines) then		-- if the line will not be visible
 			if s.linetype == INFO_REALM_LINE then								-- then keep track of counters
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
-				if s.isCollapsed == false then
+				CurrentLinkedAccount = s.linkedAccount
+				if not s.isCollapsed then
 					DrawRealm = true
 				else
 					DrawRealm = false
@@ -43,15 +47,20 @@ function Altoholic:AccountSummary_Update()
 			if s.linetype == INFO_REALM_LINE then
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
-				if s.isCollapsed == false then
-					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up"); 
+				CurrentLinkedAccount = s.linkedAccount
+				if not s.isCollapsed then
+					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up");
 					DrawRealm = true
 				else
 					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-PlusButton-Up");
 					DrawRealm = false
 				end
 				getglobal(entry..i.."Collapse"):Show()
-				getglobal(entry..i.."Name"):SetText(self:GetFullRealmString(s.faction, s.realm))
+				local realmText = self:GetFullRealmString(s.faction, s.realm)
+				if s.linkedAccount then
+					realmText = realmText .. " (" .. s.linkedAccount .. ")"
+				end
+				getglobal(entry..i.."Name"):SetText(realmText)
 				getglobal(entry..i.."Name"):SetJustifyH("LEFT")
 				getglobal(entry..i.."Name"):SetPoint("TOPLEFT", 25, 0)
 				getglobal(entry..i.."Name"):SetWidth(210)
@@ -67,7 +76,28 @@ function Altoholic:AccountSummary_Update()
 				DisplayedCount = DisplayedCount + 1
 			elseif DrawRealm then
 				if (s.linetype == INFO_CHARACTER_LINE) then
-					local c = self.db.account.data[CurrentFaction][CurrentRealm].char[s.name]
+					-- A resolved record -- local or linked -- can still be
+					-- missing individual fields (a barely-played alt that's
+					-- never triggered PLAYER_MONEY, a stub entry, etc), not
+					-- just be missing outright, so default per-field rather
+					-- than only guarding the "nothing found at all" case.
+					-- level must stay numeric even as a placeholder: it
+					-- feeds GetRestedXP -> GetRestXPRate's
+					-- self.XPToNext[level] arithmetic, and a non-numeric
+					-- value (e.g. "?") makes that lookup nil and crashes on
+					-- the divide.
+					local raw = Altoholic:ResolveLinkedChar(CurrentFaction, CurrentRealm, CurrentLinkedAccount, s.name)
+					local c = {
+						class = (raw and raw.class) or "",
+						race = (raw and raw.race) or "",
+						level = (raw and raw.level) or 1,
+						talent = (raw and raw.talent) or "",
+						money = (raw and raw.money) or 0,
+						played = (raw and raw.played) or 0,
+						restxp = raw and raw.restxp,
+						isResting = raw and raw.isResting,
+						lastlogout = (raw and raw.lastlogout) or 0,
+					}
 					local color = self:GetClassColor(c.class)
 					getglobal(entry..i.."Collapse"):Hide()
 					getglobal(entry..i.."Name"):SetText(color .. s.name)
@@ -122,14 +152,30 @@ function Altoholic_AccountSummaryLevel_OnEnter(self)
 	if s.linetype ~= INFO_CHARACTER_LINE then		
 		return
 	end
-	local Faction, Realm = Altoholic:GetCharacterInfo(line)
-	local c = Altoholic.db.account.data[Faction][Realm].char[s.name]
+	local Faction, Realm, LinkedAccount = Altoholic:GetCharacterInfo(line)
+	local raw = Altoholic:ResolveLinkedChar(Faction, Realm, LinkedAccount, s.name)
+	if not raw then return end
+	-- Same reasoning as AccountSummary_Update: a resolved record can still
+	-- be missing individual fields, local or linked.
+	local c = {
+		class = raw.class or "",
+		race = raw.race or "",
+		level = raw.level or 1,
+		zone = raw.zone or "",
+		subzone = raw.subzone or "",
+		restxp = raw.restxp,
+		SavedInstance = raw.SavedInstance,
+		pvp_ArenaPoints = raw.pvp_ArenaPoints,
+		pvp_hk = raw.pvp_hk,
+		pvp_HonorPoints = raw.pvp_HonorPoints,
+		pvp_dk = raw.pvp_dk,
+	}
 	local suggestion = Altoholic:GetSuggestion("Leveling", c.level)
 	AltoTooltip:ClearLines();
 	AltoTooltip:SetOwner(self, "ANCHOR_RIGHT");
 	AltoTooltip:AddLine(Altoholic:GetClassColor(c.class) .. s.name,1,1,1);
 	AltoTooltip:AddLine(L["Level"] .. " " .. GREEN .. c.level .. " |r".. c.race .. " " .. c.class,1,1,1);
-	AltoTooltip:AddLine(L["Zone"] .. ": " .. GOLD .. c.zone .. " |r(" .. GOLD .. c.subzone .."|r)",1,1,1);	
+	AltoTooltip:AddLine(L["Zone"] .. ": " .. GOLD .. c.zone .. " |r(" .. GOLD .. c.subzone .."|r)",1,1,1);
 	if c.restxp then
 		AltoTooltip:AddLine(L["Rest XP"] .. ": " .. GREEN .. c.restxp,1,1,1);
 	end
@@ -139,8 +185,14 @@ function Altoholic_AccountSummaryLevel_OnEnter(self)
 		AltoTooltip:AddLine(TEAL .. suggestion,1,1,1);
 	end
 	-- parse saved instances
+	-- SavedInstance (and the pvp_* fields below) are nil rather than an
+	-- empty table when a character has simply never touched that system --
+	-- AceDB's own metatable normally auto-vivifies these to {} on first
+	-- local access, but a linked account's data is a plain deserialized
+	-- table with no such magic, so the gap that was always latent here
+	-- only actually surfaces for linked characters.
 	local bLineBreak = true
-	for InstanceName, InstanceInfo in pairs (c.SavedInstance) do
+	for InstanceName, InstanceInfo in pairs (c.SavedInstance or {}) do
 		if bLineBreak then
 			AltoTooltip:AddLine(" ",1,1,1);		-- add a line break only once
 			bLineBreak = nil
@@ -158,8 +210,8 @@ function Altoholic_AccountSummaryLevel_OnEnter(self)
 	end
 	-- add PVP info if any
 	AltoTooltip:AddLine(" ",1,1,1);
-	AltoTooltip:AddDoubleLine(WHITE.. L["Arena points: "] .. GREEN .. c.pvp_ArenaPoints, "HK: " .. GREEN .. c.pvp_hk )
-	AltoTooltip:AddDoubleLine(WHITE.. L["Honor points: "] .. GREEN .. c.pvp_HonorPoints, "DK: " .. GREEN .. c.pvp_dk )
+	AltoTooltip:AddDoubleLine(WHITE.. L["Arena points: "] .. GREEN .. (c.pvp_ArenaPoints or 0), "HK: " .. GREEN .. (c.pvp_hk or 0) )
+	AltoTooltip:AddDoubleLine(WHITE.. L["Honor points: "] .. GREEN .. (c.pvp_HonorPoints or 0), "DK: " .. GREEN .. (c.pvp_dk or 0) )
 	AltoTooltip:Show();
 end
 
@@ -168,15 +220,22 @@ function Altoholic_AccountSummaryLevel_OnClick(button, id)
 	local line = this:GetParent():GetID()
 	if line == 0 then return end
 	local s = Altoholic.CharacterInfo[line]
-	if s.linetype ~= INFO_CHARACTER_LINE then		
+	if s.linetype ~= INFO_CHARACTER_LINE then
 		return
 	end
+	local Faction, Realm, LinkedAccount = Altoholic:GetCharacterInfo(line)
+	-- Linked-account rows (Modules/LinkSync.lua) are a read-only mirror of
+	-- another account's data, so the right-click menu is allowed to open
+	-- for them, but "Delete this Alt" (Altoholic_DeleteAlt) refuses on its
+	-- own when the target is linked -- there's nothing else here to guard,
+	-- every "View X" module reads through Altoholic:ResolveLinkedChar.
 	if button == "RightButton" then
 		V.CharInfoLine = line	-- line containing info about the alt on which action should be taken (delete, ..)
 		ToggleDropDownMenu(1, nil, AltoSummaryRightClickMenu, this:GetName(), 0, -5);
 		return
 	elseif button == "LeftButton" then
-		V.CurrentFaction, V.CurrentRealm = Altoholic:GetCharacterInfo(line)
+		V.CurrentFaction, V.CurrentRealm = Faction, Realm
+		V.CurrentLinkedAccount = LinkedAccount
 		V.CurrentAlt = s.name
 		Altoholic:UpdateContainerCache()
 		Altoholic:ClearScrollFrame(getglobal("AltoContainersScrollFrame"), "AltoContainersEntry", 7, 41)
@@ -214,7 +273,11 @@ end
 function Altoholic_ViewAltInfo()
 	local line = V.CharInfoLine
 	V.CharInfoLine = nil
-	V.CurrentFaction, V.CurrentRealm = Altoholic:GetCharacterInfo(line)
+	-- Captured for every row, local or linked (Modules/LinkSync.lua), so
+	-- it can't be left stale from an earlier row's selection -- every "View
+	-- X" branch below reads through Altoholic:ResolveLinkedChar, which
+	-- branches on this.
+	V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount = Altoholic:GetCharacterInfo(line)
 	V.CurrentAlt = Altoholic.CharacterInfo[line].name
 	if this.value == 1 then		-- bags
 		Altoholic:UpdateContainerCache()
@@ -241,7 +304,15 @@ function Altoholic_DeleteAlt()
 	V.CharInfoLine = nil
 	local s = Altoholic.CharacterInfo[line] -- no validity check, this comes from the dropdownmenu, it's been secured earlier
 	local AltName = s.name
-	local Faction, Realm = Altoholic:GetCharacterInfo(line)
+	local Faction, Realm, LinkedAccount = Altoholic:GetCharacterInfo(line)
+	if LinkedAccount then
+		-- Unlike every other right-click option, deletion has no meaning
+		-- against a linked row: it's a read-only mirror of another
+		-- account's data (Modules/LinkSync.lua), and Altoholic.db.account.data
+		-- doesn't even have an entry for it to delete.
+		DEFAULT_CHAT_FRAME:AddMessage(TEAL .. "Altoholic: " .. WHITE .. L["Cannot delete current character"])
+		return
+	end
 	local r = Altoholic.db.account.data[Faction][Realm]
 	if (Faction == V.faction) and (Realm == V.realm) and (AltName == V.player) then
 		DEFAULT_CHAT_FRAME:AddMessage(TEAL .. "Altoholic: " .. WHITE .. L["Cannot delete current character"])

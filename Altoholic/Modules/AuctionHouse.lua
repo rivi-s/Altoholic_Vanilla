@@ -13,19 +13,24 @@ local Scanner = CreateFrame("GameTooltip", "Altoholic_ScannerTooltip", nil, "Gam
 Scanner:SetOwner(UIParent, "ANCHOR_NONE")
 
 function Altoholic:Auctions_Update_Auctions()
-	local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]
+	local raw = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
+	local c = { auctions = (raw and raw.auctions) or {}, lastAHcheck = (raw and raw.lastAHcheck) or 0 }
 	local VisibleLines = 7
 	local frame = "AltoAuctions"
 	local entry = frame.."Entry"
+	local nameSuffix = ""
+	if V.CurrentLinkedAccount then
+		nameSuffix = " (" .. V.CurrentLinkedAccount .. ")"
+	end
 
 	if table.getn(c.auctions) == 0 then
-		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. L[" has no auctions"])
+		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. L[" has no auctions"])
 		getglobal("AltoholicFrame_Status"):Show()
-		
+
 		self:ClearScrollFrame(getglobal(frame.."ScrollFrame"), entry, VisibleLines, 41)
 		return
 	else
-   		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF: " .. L["last check "] .. self:GetDelayInDays(c.lastAHcheck).. L[" days ago"])
+   		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF: " .. L["last check "] .. self:GetDelayInDays(c.lastAHcheck).. L[" days ago"])
 		getglobal("AltoholicFrame_Status"):Show()
 	end
 
@@ -90,19 +95,24 @@ function Altoholic:Auctions_Update_Auctions()
 end
 
 function Altoholic:Auctions_Update_Bids()
-	local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]		-- current alt
+	local raw = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)		-- current alt
+	local c = { bids = (raw and raw.bids) or {}, lastAHcheck = (raw and raw.lastAHcheck) or 0 }
 	local VisibleLines = 7
 	local frame = "AltoAuctions"
 	local entry = frame.."Entry"
-	
+	local nameSuffix = ""
+	if V.CurrentLinkedAccount then
+		nameSuffix = " (" .. V.CurrentLinkedAccount .. ")"
+	end
+
 	if table.getn(c.bids) == 0 then
-		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. L[" has no bids"])
+		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. L[" has no bids"])
 		getglobal("AltoholicFrame_Status"):Show()
-		
+
 		self:ClearScrollFrame(getglobal(frame.."ScrollFrame"), entry, VisibleLines, 41)
 		return
 	else
-		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. BIDS .. ": " .. L["last check "] .. self:GetDelayInDays(c.lastAHcheck).. L[" days ago"])
+		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. BIDS .. ": " .. L["last check "] .. self:GetDelayInDays(c.lastAHcheck).. L[" days ago"])
 		getglobal("AltoholicFrame_Status"):Show()
 	end
 
@@ -258,8 +268,16 @@ function errhandler(msg)
 end
 
 function Altoholic_ClearPlayerAHEntries()
+	if V.CurrentLinkedAccount then
+		-- Same reasoning as Altoholic_DeleteAlt in AccountSummary.lua: this
+		-- mutates Altoholic.db.account.data directly, which has no entry at
+		-- all for a linked row -- refuse rather than mutate the wrong thing
+		-- or crash.
+		DEFAULT_CHAT_FRAME:AddMessage(TEAL .. "Altoholic: " .. WHITE .. L["Cannot delete current character"])
+		return
+	end
 	local c = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]		-- current alt
-	
+
 	if (this.value == 1) or (this.value == 3) then	-- clean this faction's data
 		for i = table.getn(c[V.AuctionType]), 1, -1 do
 			if c[V.AuctionType][i].AHLocation == nil then

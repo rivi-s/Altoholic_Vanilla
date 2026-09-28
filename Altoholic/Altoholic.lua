@@ -772,8 +772,9 @@ function Altoholic:UpdateKeyRing()
 end
 
 function Altoholic:UpdateContainerCache()
-	local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]
+	local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
 	Altoholic.BagIndices = {}
+	if not c then return end
 	for bagID = 0, 10 do
 		if c.bag["Bag"..bagID] ~= nil then
 			self:UpdateBagIndices(bagID, c.bag["Bag"..bagID].size)
@@ -921,13 +922,16 @@ function Altoholic:Menu_Update(MenuLevel1, MenuLevel2, MenuLevel3)
 	self.MenuCache = {}
 	for _, L0 in pairs (self.Menu) do
 		table.insert(self.MenuCache, { linetype=1, name=L0.name, OnClick=L0.OnClick } )
-		if L0.isCollapsed == false then
+		-- L0.subMenu and: a leaf category (no drill-down at all, e.g. Bag
+		-- Usage) has no subMenu table to begin with -- "not collapsed"
+		-- must not be read as "go iterate a table that was never there".
+		if L0.subMenu and not L0.isCollapsed then
 			for _, L1 in pairs (L0.subMenu) do
 				table.insert(self.MenuCache, { linetype=2, name=L1.name, id=L1.id, OnClick=L1.OnClick	} )
-				if L1.isCollapsed == false then
+				if L1.subMenu and not L1.isCollapsed then
 					for _, L2 in pairs (L1.subMenu) do
 						table.insert(self.MenuCache, { linetype=3, name=L2.name, id=L2.id, OnClick=L2.OnClick	} )
-						if L2.isCollapsed == false then
+						if L2.subMenu and not L2.isCollapsed then
 							for _, L3 in pairs (L2.subMenu) do
 								table.insert(self.MenuCache, { linetype=4, name=L3.name, id=L3.id, OnClick=L3.OnClick	} )
 							end
@@ -969,6 +973,20 @@ function Altoholic:SelectAlt(id)
 	V.CurrentFaction = FactionName
 	V.CurrentRealm = RealmName
 	V.CurrentAlt = CharacterName
+	-- This id always comes from self.db.account.data (BuildContainersSubMenu
+	-- builds it from nothing else), so this is always a local alt -- clear
+	-- explicitly rather than leaving a linked-row left-click's label stale.
+	V.CurrentLinkedAccount = nil
+end
+
+-- Same idea as SelectAlt, for a linked-account row (Modules/LinkSync.lua):
+-- id is "label:faction:realm:character".
+function Altoholic:SelectLinkedAlt(id)
+	local LinkedAccount, FactionName, RealmName, CharacterName = Altoholic:strsplit(":", id)
+	V.CurrentFaction = FactionName
+	V.CurrentRealm = RealmName
+	V.CurrentAlt = CharacterName
+	V.CurrentLinkedAccount = LinkedAccount
 end
 
 function Altoholic:BuildContainersSubMenu()
@@ -1007,6 +1025,59 @@ function Altoholic:BuildContainersSubMenu()
 			n = n + 1
 		end
 	end
+	-- Linked accounts (Modules/LinkSync.lua) get their own realm entries
+	-- here too, not just the AccountSummary left-click path -- otherwise
+	-- this menu is the only way to reach Containers and it silently can't
+	-- see another account's data. Get_Sorted_Character_List only knows
+	-- self.db.account.data, so these are listed alphabetically instead of
+	-- by level.
+	if Altoholic.LinkedAccounts then
+		for label, accountData in pairs(Altoholic.LinkedAccounts) do
+			for FactionName, f in pairs(accountData) do
+				for RealmName, r in pairs(f) do
+					if r.char then
+						local names = {}
+						for CharacterName in pairs(r.char) do
+							table.insert(names, CharacterName)
+						end
+						table.sort(names)
+						if table.getn(names) > 0 then
+							local realmsID = n
+							table.insert(self.Menu[MENU_CONTAINERS].subMenu, {
+								name = self:GetRealmString(FactionName, RealmName) .. " (" .. label .. ")",
+								isCollapsed = true,
+								id = n,
+								subMenu = {},
+								OnClick = function(self)
+									Altoholic:Menu_Update(MENU_CONTAINERS, realmsID)
+								end
+							} )
+							for i = 1, table.getn(names) do
+								-- Encoded into one string ID and resolved
+								-- fresh in SelectLinkedAlt at click time,
+								-- same as the local altID pattern just above
+								-- -- rather than trust four separate values
+								-- captured live across this many nested
+								-- pairs() loops.
+								local altID = label .. ":" .. FactionName .. ":" .. RealmName .. ":" .. names[i]
+								table.insert(self.Menu[MENU_CONTAINERS].subMenu[n].subMenu, {
+									name = names[i],
+									id = (n*100)+i,
+									OnClick = function(self)
+										Altoholic:SelectLinkedAlt(altID)
+										Altoholic:UpdateContainerCache()
+										Altoholic:ClearScrollFrame(getglobal("AltoContainersScrollFrame"), "AltoContainersEntry", 7, 41)
+										Altoholic:ActivateMenuItem("AltoContainers")
+									end
+								} )
+							end
+							n = n + 1
+						end
+					end
+				end
+			end
+		end
+	end
 end
 
 function Altoholic:BuildMailSubMenu()
@@ -1026,7 +1097,7 @@ function Altoholic:BuildMailSubMenu()
 			local byLevel = Altoholic:Get_Sorted_Character_List(FactionName, RealmName)
 			for _, CharacterName in byLevel do
 				local c = self.db.account.data[FactionName][RealmName].char[CharacterName]
-				if table.getn(c.mail) >= 1 then
+				if table.getn(c.mail or {}) >= 1 then
 					CharacterNameM = CharacterName .. " " .. GREEN .. L["(has mail)"]
 				end
 				local altID = FactionName .. ":" .. RealmName .. ":" .. CharacterName
@@ -1044,6 +1115,35 @@ function Altoholic:BuildMailSubMenu()
 			n = n + 1
 		end
 	end
+	Altoholic:ForEachLinkedRealm(function(label, FactionName, RealmName, names, charTable)
+		local realmsID = n
+		table.insert(self.Menu[MENU_MAIL].subMenu, {
+			name = self:GetRealmString(FactionName, RealmName) .. " (" .. label .. ")",
+			isCollapsed = true,
+			id = n,
+			subMenu = {},
+			OnClick = function(self) Altoholic:Menu_Update(MENU_MAIL, realmsID) end
+		} )
+		for i = 1, table.getn(names) do
+			local CharacterName = names[i]
+			local c = charTable[CharacterName]
+			local hasmail = CharacterName
+			if table.getn(c.mail or {}) >= 1 then
+				hasmail = CharacterName .. " " .. GREEN .. L["(has mail)"]
+			end
+			local altID = label .. ":" .. FactionName .. ":" .. RealmName .. ":" .. CharacterName
+			table.insert(self.Menu[MENU_MAIL].subMenu[n].subMenu, {
+				name = CharacterName,
+				hasmail = hasmail,
+				id = (n*100)+i,
+				OnClick = function(self)
+					Altoholic:SelectLinkedAlt(altID)
+					Altoholic:ActivateMenuItem("AltoMail")
+				end
+			} )
+		end
+		n = n + 1
+	end)
 end
 
 function Altoholic:BuildEquipmentSubMenu()
@@ -1067,6 +1167,20 @@ function Altoholic:BuildEquipmentSubMenu()
 			n = n + 1
 		end
 	end
+	Altoholic:ForEachLinkedRealm(function(label, FactionName, RealmName, names, charTable)
+		local altID = label .. ":" .. FactionName .. ":" .. RealmName .. ":" .. names[1]
+		table.insert(self.Menu[MENU_EQUIPMENT].subMenu, {
+			name = self:GetRealmString(FactionName, RealmName) .. " (" .. label .. ")",
+			isCollapsed = true,
+			id = (n*100)+1,
+			subMenu = {},
+			OnClick = function(self)
+				Altoholic:SelectLinkedAlt(altID)
+				Altoholic:ActivateMenuItem("AltoEquipment")
+			end
+		} )
+		n = n + 1
+	end)
 end
 
 function Altoholic:BuildQuestsSubMenu()
@@ -1100,6 +1214,29 @@ function Altoholic:BuildQuestsSubMenu()
 			n = n + 1
 		end
 	end
+	Altoholic:ForEachLinkedRealm(function(label, FactionName, RealmName, names, charTable)
+		local realmsID = n
+		table.insert(self.Menu[MENU_QUESTS].subMenu, {
+			name = self:GetRealmString(FactionName, RealmName) .. " (" .. label .. ")",
+			isCollapsed = true,
+			id = n,
+			subMenu = {},
+			OnClick = function(self) Altoholic:Menu_Update(MENU_QUESTS, realmsID) end
+		} )
+		for i = 1, table.getn(names) do
+			local CharacterName = names[i]
+			local altID = label .. ":" .. FactionName .. ":" .. RealmName .. ":" .. CharacterName
+			table.insert(self.Menu[MENU_QUESTS].subMenu[n].subMenu, {
+				name = CharacterName,
+				id = (n*100)+i,
+				OnClick = function(self)
+					Altoholic:SelectLinkedAlt(altID)
+					Altoholic:ActivateMenuItem("AltoQuests")
+				end
+			} )
+		end
+		n = n + 1
+	end)
 end
 
 function Altoholic:BuildRecipesSubMenu()
@@ -1136,7 +1273,7 @@ function Altoholic:BuildRecipesSubMenu()
 						Altoholic:Menu_Update(MENU_RECIPES, realmID, charID)
 					end
 				} )
-				for TradeSkillName, _ in pairs(c.recipes) do
+				for TradeSkillName, _ in pairs(c.recipes or {}) do
 					local skillName = Altoholic:GetProfessionID(TradeSkillName)
 					if skillName then
 						local skillsID = skillName + (n * 10000) + (i * 100)
@@ -1144,7 +1281,6 @@ function Altoholic:BuildRecipesSubMenu()
 							name = TradeSkillName,
 							id = skillName + (n * 10000) + (i * 100),
 							OnClick = function(self)
-								if skillName == 14 or skillName == 15 then return end -- disable disguise/survial
 								local id = skillsID
 								local skillID = mod(id, 100)
 								id = floor(id / 100)
@@ -1160,6 +1296,53 @@ function Altoholic:BuildRecipesSubMenu()
 			n = n + 1
 		end
 	end
+	Altoholic:ForEachLinkedRealm(function(label, FactionName, RealmName, names, charTable)
+		local realmsID = n
+		table.insert(self.Menu[MENU_RECIPES].subMenu, {
+			name = self:GetRealmString(FactionName, RealmName) .. " (" .. label .. ")",
+			isCollapsed = true,
+			id = n,
+			subMenu = {},
+			OnClick = function(self) Altoholic:Menu_Update(MENU_RECIPES, realmsID) end
+		} )
+		for i = 1, table.getn(names) do
+			local CharacterName = names[i]
+			local c = charTable[CharacterName]
+			local altID = label .. ":" .. FactionName .. ":" .. RealmName .. ":" .. CharacterName
+			local id = n*100 + i
+			table.insert(self.Menu[MENU_RECIPES].subMenu[n].subMenu, {
+				name = CharacterName,
+				isCollapsed = true,
+				id,
+				subMenu = {},
+				OnClick = function(self)
+					local lid = id
+					local realmID = floor(lid / 100)
+					local charID = mod(lid, 100)
+					Altoholic:Menu_Update(MENU_RECIPES, realmID, charID)
+				end
+			} )
+			for TradeSkillName, _ in pairs(c.recipes or {}) do
+				local skillName = Altoholic:GetProfessionID(TradeSkillName)
+				if skillName then
+					local skillsID = skillName + (n * 10000) + (i * 100)
+					table.insert(self.Menu[MENU_RECIPES].subMenu[n].subMenu[i].subMenu, {
+						name = TradeSkillName,
+						id = skillName + (n * 10000) + (i * 100),
+						OnClick = function(self)
+							local id = skillsID
+							local skillID = mod(id, 100)
+							id = floor(id / 100)
+							Altoholic:SelectLinkedAlt(altID)
+							Altoholic:SelectProfession(skillID)
+							Altoholic:ActivateMenuItem("AltoRecipes")
+						end
+					} )
+				end
+			end
+		end
+		n = n + 1
+	end)
 end
 
 function Altoholic:BuildAuctionsSubMenu()
@@ -1181,7 +1364,7 @@ function Altoholic:BuildAuctionsSubMenu()
 				local c = self.db.account.data[FactionName][RealmName].char[CharacterName]
 				local CharacterName = CharacterName
 				local altID = FactionName .. ":" .. RealmName .. ":" .. CharacterName
-				if table.getn(c.auctions) >= 1 then
+				if table.getn(c.auctions or {}) >= 1 then
 					CharacterName = CharacterName .. " " .. GREEN .. L["(has auctions)"]
 				end
 				table.insert(self.Menu[MENU_AUCTIONS].subMenu[n].subMenu, {
@@ -1199,6 +1382,36 @@ function Altoholic:BuildAuctionsSubMenu()
             n = n + 1
 		end
 	end
+	Altoholic:ForEachLinkedRealm(function(label, FactionName, RealmName, names, charTable)
+		local realmsID = n
+		table.insert(self.Menu[MENU_AUCTIONS].subMenu, {
+			name = self:GetRealmString(FactionName, RealmName) .. " (" .. label .. ")",
+			isCollapsed = true,
+			id = n,
+			subMenu = {},
+			OnClick = function(self) Altoholic:Menu_Update(MENU_AUCTIONS, realmsID) end
+		} )
+		for i = 1, table.getn(names) do
+			local CharacterName = names[i]
+			local c = charTable[CharacterName]
+			local altID = label .. ":" .. FactionName .. ":" .. RealmName .. ":" .. CharacterName
+			local displayName = CharacterName
+			if table.getn(c.auctions or {}) >= 1 then
+				displayName = CharacterName .. " " .. GREEN .. L["(has auctions)"]
+			end
+			table.insert(self.Menu[MENU_AUCTIONS].subMenu[n].subMenu, {
+				name = displayName,
+				id = (n*100)+i,
+				OnClick = function(self)
+					Altoholic.Auctions_Update = Altoholic.Auctions_Update_Auctions
+					V.AuctionType = "auctions"
+					Altoholic:SelectLinkedAlt(altID)
+					Altoholic:ActivateMenuItem("AltoAuctions")
+				end
+			} )
+		end
+		n = n + 1
+	end)
 end
 
 function Altoholic:BuildBidsSubMenu()
@@ -1220,7 +1433,7 @@ function Altoholic:BuildBidsSubMenu()
 				local c = self.db.account.data[FactionName][RealmName].char[CharacterName]
 				local altID = FactionName .. ":" .. RealmName .. ":" .. CharacterName
 				local CharacterName = CharacterName
-				if table.getn(c.bids) > 0 then
+				if table.getn(c.bids or {}) > 0 then
 					CharacterName = CharacterName .. " " .. GREEN .. L["(has bids)"]
 				end
 				table.insert(self.Menu[MENU_BIDS].subMenu[n].subMenu, {
@@ -1238,6 +1451,36 @@ function Altoholic:BuildBidsSubMenu()
 			n = n + 1
 		end
 	end
+	Altoholic:ForEachLinkedRealm(function(label, FactionName, RealmName, names, charTable)
+		local realmsID = n
+		table.insert(self.Menu[MENU_BIDS].subMenu, {
+			name = self:GetRealmString(FactionName, RealmName) .. " (" .. label .. ")",
+			isCollapsed = true,
+			id = n,
+			subMenu = {},
+			OnClick = function(self) Altoholic:Menu_Update(MENU_BIDS, realmsID) end
+		} )
+		for i = 1, table.getn(names) do
+			local CharacterName = names[i]
+			local c = charTable[CharacterName]
+			local altID = label .. ":" .. FactionName .. ":" .. RealmName .. ":" .. CharacterName
+			local displayName = CharacterName
+			if table.getn(c.bids or {}) > 0 then
+				displayName = CharacterName .. " " .. GREEN .. L["(has bids)"]
+			end
+			table.insert(self.Menu[MENU_BIDS].subMenu[n].subMenu, {
+				name = displayName,
+				id = (n*100)+i,
+				OnClick = function(self)
+					Altoholic.Auctions_Update = Altoholic.Auctions_Update_Bids
+					V.AuctionType = "bids"
+					Altoholic:SelectLinkedAlt(altID)
+					Altoholic:ActivateMenuItem("AltoAuctions")
+				end
+			} )
+		end
+		n = n + 1
+	end)
 end
 
 function Altoholic:BuildFactionsTable()
@@ -1318,15 +1561,17 @@ function Altoholic:SelectProfession(id)
         if id == i then
             local ProfessionLevel
             V.CurrentProfession = v
+            local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
+            local skill = (c and c.skill) or {}
             if id < 8 then
-                ProfessionLevel = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt].skill[L["Professions"]][V.CurrentProfession]
+                ProfessionLevel = (skill[L["Professions"]] or {})[V.CurrentProfession]
             elseif id == 8 or id == 9 or id == 10 or id == 11 then
-                ProfessionLevel = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt].skill[L["Secondary Skills"]][V.CurrentProfession]
+                ProfessionLevel = (skill[L["Secondary Skills"]] or {})[V.CurrentProfession]
             elseif id == 12 or id == 13 then
-                if c.class ~= L["Rogue"] then
+                if not c or c.class ~= L["Rogue"] then
 			        return
 		        end
-                ProfessionLevel = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt].skill[L["Rogue Proficiencies"]][V.CurrentProfession]
+                ProfessionLevel = (skill[L["Rogue Proficiencies"]] or {})[V.CurrentProfession]
             end
             local rank, maxRank = Altoholic:strsplit("|", ProfessionLevel)
             if rank == nil then rank = '0' end
@@ -1445,9 +1690,8 @@ function Altoholic:GetQuestTypeString(tag, size)
 end
 
 function Altoholic:GetClassColor(class)
-	if class == nil or class == "" then 
-		DEFAULT_CHAT_FRAME:AddMessage(WHITE .. debugstack())
-		return WHITE 
+	if class == nil or class == "" then
+		return WHITE
 	end
 
 	return self.ClassInfo[self.Classes[class]].color
@@ -1500,7 +1744,9 @@ function Altoholic:GetCharacterInfo(line)
 	for i = line-1, 1, -1 do
 		local s = self.CharacterInfo[i]
 		if s.linetype == INFO_REALM_LINE then
-			return s.faction, s.realm
+			-- 3rd value is the source account label for a Link-synced row
+			-- (Modules/LinkSync.lua), nil for this account's own data.
+			return s.faction, s.realm, s.linkedAccount
 		end
 	end
 end
@@ -1702,7 +1948,16 @@ end
 
 -- *** Overloaded events (OnEnter, OnClick ..) ***
 function Altoholic:DrawCharacterTooltip(charName)
-	local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[charName]
+	local raw = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, charName)
+	if not raw then return end
+	local c = {
+		class = raw.class or "",
+		race = raw.race or "",
+		level = raw.level or 1,
+		zone = raw.zone or "",
+		subzone = raw.subzone or "",
+		restxp = raw.restxp,
+	}
 	AltoTooltip:SetOwner(this, "ANCHOR_LEFT");
 	AltoTooltip:ClearLines();
 	AltoTooltip:AddLine(Altoholic:GetClassColor(c.class)..charName,1,1,1);
@@ -2016,8 +2271,11 @@ Altoholic_compare_faction = nil
 Altoholic_compare_realm = nil
 
 local function compare_Character_By_Level(c1, c2)
-	local l1 = Altoholic.db.account.data[Altoholic_compare_faction][Altoholic_compare_realm].char[c1].level
-	local l2 = Altoholic.db.account.data[Altoholic_compare_faction][Altoholic_compare_realm].char[c2].level
+	-- A stub/incomplete character record (no level ever set) must not
+	-- error out of the comparator -- table.sort propagates that error and
+	-- aborts whatever called it.
+	local l1 = Altoholic.db.account.data[Altoholic_compare_faction][Altoholic_compare_realm].char[c1].level or 0
+	local l2 = Altoholic.db.account.data[Altoholic_compare_faction][Altoholic_compare_realm].char[c2].level or 0
 	if l1 == l2 then
 		return c1 < c2  -- alphabetically when same level
 	else
@@ -2109,6 +2367,9 @@ function Altoholic:UpdatePlayerLocation()
 end
 
 function Altoholic:PLAYER_LOGOUT()
+	if self.SaveQuestLogCollapseState then
+		self:SaveQuestLogCollapseState()
+	end
 	self.db.account.data[V.faction][V.realm].char[V.player].lastlogout = time()
 end
 
@@ -2116,20 +2377,35 @@ function Altoholic:TIME_PLAYED_MSG(TotalTime, CurrentLevelTime)
 	self.db.account.data[V.faction][V.realm].char[V.player].played = TotalTime
 end
 
-function Altoholic:UNIT_INVENTORY_CHANGED()
+function Altoholic:UNIT_INVENTORY_CHANGED(unit)
+	-- Party and pet equipment changes do not affect this character snapshot.
+	if unit and unit ~= "player" then return end
 	self:UpdateEquipment()
 end
 
 function Altoholic:BAG_UPDATE(bag)
 	V.ToolTipCachedItemID = nil
-	if (bag >= 5) and (bag <= 11) and not V.isBankOpen then
-		return
-	end
+	bag = tonumber(bag)
 	if V.isMailBoxOpen then
 		self:UpdatePlayerMail()
 	end
-    self:UpdatePlayerBags()
-    self:UpdatePlayerInventory()
+
+	-- Update only the container named by the event. Some legacy clients omit
+	-- the bag argument, so retain the complete scan as a compatibility fallback.
+	if bag == nil then
+		self:UpdatePlayerBags()
+	elseif bag >= 0 and bag <= 4 then
+		self:UpdatePlayerBag(bag)
+	elseif bag == -2 then
+		self:UpdateKeyRing()
+	elseif bag >= 5 and bag <= 11 then
+		if V.isBankOpen then self:UpdatePlayerBank(false) end
+		return
+	else
+		return
+	end
+
+	self:UpdatePlayerInventory()
 end
 
 function Altoholic:BANKFRAME_OPENED()

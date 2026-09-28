@@ -26,7 +26,12 @@ function Altoholic:Reputations_Update()
 		itemButton:SetScript("OnEnter", Altoholic_Reputations_OnEnter)
 		itemButton:SetScript("OnLeave", function(self) AltoTooltip:Hide() end)
 		itemButton:SetScript("OnClick", Altoholic_Equipment_OnClick)
-		local tc = self.ClassInfo[ self.Classes[c.class] ].texcoord
+		-- An incomplete character record (no class ever set, e.g. a stub
+		-- entry) makes self.Classes[c.class] nil, and indexing
+		-- self.ClassInfo[nil] would crash the whole view -- same gap fixed
+		-- in Modules/Equipment.lua.
+		local classToken = self.Classes[c.class]
+		local tc = (classToken and self.ClassInfo[classToken].texcoord) or {0, 1, 0, 1}
 		local itemTexture = getglobal(itemName .. "IconTexture")
 		itemTexture:SetTexture(self.classicon);
 		itemTexture:SetTexCoord(tc[1], tc[2], tc[3], tc[4]);
@@ -53,7 +58,7 @@ function Altoholic:Reputations_Update()
 	for line, s in pairs(V.Factions) do
 		if (offset > 0) or (DisplayedCount >= VisibleLines) then		-- if the line will not be visible
 			if type(s) == "table" then								-- then keep track of counters
-				if s.isCollapsed == false then
+				if not s.isCollapsed then
 					DrawFactionGroup = true
 				else
 					DrawFactionGroup = false
@@ -66,7 +71,7 @@ function Altoholic:Reputations_Update()
 			end
 		else		-- line will be displayed
 			if type(s) == "table" then
-				if s.isCollapsed == false then
+				if not s.isCollapsed then
 					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up");
 					DrawFactionGroup = true
 				else

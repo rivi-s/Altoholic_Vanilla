@@ -1,5 +1,12 @@
 # Altoholic_Vanilla
 
+This fork adds optional cross-account visibility via
+[Link](https://github.com/rivi-s/Link), a small native DLL that lets
+addons share plain-text data between different WoW accounts on the same
+computer (no networking of any kind). See `Altoholic/Modules/LinkSync.lua`
+for the integration and Link's own README for what it does and doesn't
+do. Entirely opt-in: everything here is a no-op if Link isn't installed.
+
 This is my version for Turtle WOW. See the original README below.
 
 

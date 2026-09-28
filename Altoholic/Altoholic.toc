@@ -44,6 +44,7 @@ Items\Suggestions_zhTW.lua
 Altoholic.lua
 Altoholic.xml
 
+Modules\LinkSync.lua
 Modules\AccountSummary.xml
 Modules\AuctionHouse.xml
 Modules\BagUsage.xml

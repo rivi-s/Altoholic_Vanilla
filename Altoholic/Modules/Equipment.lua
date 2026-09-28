@@ -18,16 +18,26 @@ function Altoholic:Equipment_Update()
 	local entry = frame.."Entry"
 	-- ** draw class icons **
 	local i = 1
-	local byLevel = Altoholic:Get_Sorted_Character_List(V.CurrentFaction, V.CurrentRealm)
+	local byLevel
+	if V.CurrentLinkedAccount then
+		byLevel = Altoholic:GetLinkedCharacterNames(V.CurrentLinkedAccount, V.CurrentFaction, V.CurrentRealm)
+	else
+		byLevel = Altoholic:Get_Sorted_Character_List(V.CurrentFaction, V.CurrentRealm)
+	end
 	for _, CharacterName in byLevel do
-		local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[CharacterName]
+		local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, CharacterName)
+			or { class = "" }
 		local itemName = entry .. "1Item" .. i;
 		local itemButton = getglobal(itemName);
 		if itemButton == nil then break end
 		itemButton:SetScript("OnEnter", Altoholic_Equipment_OnEnter)
 		itemButton:SetScript("OnLeave", function(self) AltoTooltip:Hide() end)
 		itemButton:SetScript("OnClick", Altoholic_Equipment_OnClick)
-		local tc = self.ClassInfo[ self.Classes[c.class] ].texcoord
+		-- An incomplete character record (no class ever set -- can happen
+		-- locally too, not just for a linked account) makes self.Classes[c.class]
+		-- nil, and indexing self.ClassInfo[nil] would crash the whole view.
+		local classToken = self.Classes[c.class]
+		local tc = (classToken and self.ClassInfo[classToken].texcoord) or {0, 1, 0, 1}
 		local itemTexture = getglobal(itemName .. "IconTexture")		
 		itemTexture:SetTexture(self.classicon);
 		itemTexture:SetTexCoord(tc[1], tc[2], tc[3], tc[4]);
@@ -52,14 +62,21 @@ function Altoholic:Equipment_Update()
 		getglobal(entry..i.."Name"):SetText(self.equipment[line].color .. self.equipment[line].name)
 		local j = 1
 		for _, CharacterName in byLevel do
-			local c = self.db.account.data[V.faction][V.realm].char[CharacterName]
+			-- Was self.db.account.data[V.faction][V.realm] -- V.faction/V.realm
+			-- are always this account's own currently-logged-in character,
+			-- not the realm actually being viewed (V.CurrentFaction/
+			-- CurrentRealm, used correctly just above); harmless before
+			-- since V.CurrentRealm was always your own realm too, but a
+			-- linked or different local realm needs the real selection.
+			local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, CharacterName)
+				or { inventory = {} }
 			local itemName = entry.. i .. "Item" .. j;
 			local itemButton = getglobal(itemName);
 			if itemButton == nil then break end
 			itemButton:SetScript("OnEnter", Altoholic_Equipment_OnEnter)
 			itemButton:SetScript("OnClick", Altoholic_Equipment_OnClick)
 			local itemTexture = getglobal(itemName .. "IconTexture")
-			local itemID = c.inventory[line]
+			local itemID = (c.inventory or {})[line]
 			if itemID ~= nil then
 				itemButton.CharName = CharacterName
                 local _, _, _, _, _, _, _, _, itexture = GetItemInfo(itemID)
@@ -86,14 +103,15 @@ end
 
 function Altoholic_Equipment_OnEnter()
     if not this then return end
-	local r = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm]		-- this realm
 	local itemID = this:GetParent():GetID()
 	if itemID == 0 then		-- class icon
 		Altoholic:DrawCharacterTooltip(this.CharName)
 		return
 	end
     if not this.CharName then return end
-	local item = r.char[this.CharName].inventory[itemID]	--  equipment slot
+	local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, this.CharName)
+		or { inventory = {} }
+	local item = (c.inventory or {})[itemID]	--  equipment slot
 	--if not item then return end
 	GameTooltip:SetOwner(this, "ANCHOR_LEFT");
 	if type(item) == "number" then
@@ -109,14 +127,15 @@ end
 
 function Altoholic_Equipment_OnClick()
     if not this then return end
-	local r = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm]		-- this realm
 	local itemID = this:GetParent():GetID()
 
 	if itemID == 0 then return end		-- class icon
 	if not this.CharName then return end
-	local item = r.char[this.CharName].inventory[itemID]	--  equipment slot
+	local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, this.CharName)
+		or { inventory = {}, class = "" }
+	local item = (c.inventory or {})[itemID]	--  equipment slot
 	if not item then return end
-	
+
 	local link
 	if type(item) == "number" then
 		_, link = GetItemInfo(item)
@@ -126,7 +145,7 @@ function Altoholic_Equipment_OnClick()
 	local button = arg1
 	if button == "RightButton" then
 		V.UpgradeItemID = Altoholic:GetIDFromLink(link)		-- item ID of the item to find an upgrade for
-		V.CharacterClass = Altoholic.Classes[ r.char[this.CharName].class ]
+		V.CharacterClass = Altoholic.Classes[ c.class ]
 		ToggleDropDownMenu(1, nil, AltoEquipmentRightClickMenu, this:GetName(), 0, -5);
 		return
 	end

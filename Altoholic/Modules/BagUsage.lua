@@ -23,15 +23,16 @@ function Altoholic:BagUsage_Update()
 	local DisplayedCount = 0
 	local VisibleCount = 0
 	local DrawRealm
-	local CurrentFaction, CurrentRealm
+	local CurrentFaction, CurrentRealm, CurrentLinkedAccount
 	local i=1
-	
+
 	for line, s in pairs(self.CharacterInfo) do
 		if (offset > 0) or (DisplayedCount >= VisibleLines) then		-- if the line will not be visible
 			if s.linetype == INFO_REALM_LINE then								-- then keep track of counters
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
-				if s.isCollapsed == false then
+				CurrentLinkedAccount = s.linkedAccount
+				if not s.isCollapsed then
 					DrawRealm = true
 				else
 					DrawRealm = false
@@ -46,15 +47,20 @@ function Altoholic:BagUsage_Update()
 			if s.linetype == INFO_REALM_LINE then
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
-				if s.isCollapsed == false then
-					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up"); 
+				CurrentLinkedAccount = s.linkedAccount
+				if not s.isCollapsed then
+					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up");
 					DrawRealm = true
 				else
 					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-PlusButton-Up");
 					DrawRealm = false
 				end
 				getglobal(entry..i.."Collapse"):Show()
-				getglobal(entry..i.."Name"):SetText(self:GetFullRealmString(s.faction, s.realm))
+				local realmText = self:GetFullRealmString(s.faction, s.realm)
+				if s.linkedAccount then
+					realmText = realmText .. " (" .. s.linkedAccount .. ")"
+				end
+				getglobal(entry..i.."Name"):SetText(realmText)
 				getglobal(entry..i.."Name"):SetJustifyH("LEFT")
 				getglobal(entry..i.."Name"):SetPoint("TOPLEFT", 25, 0)
 				getglobal(entry..i.."Name"):SetWidth(210)
@@ -68,7 +74,15 @@ function Altoholic:BagUsage_Update()
 				DisplayedCount = DisplayedCount + 1
 			elseif DrawRealm then
 				if (s.linetype == INFO_CHARACTER_LINE) then
-					local c = self.db.account.data[CurrentFaction][CurrentRealm].char[s.name]
+					-- Any of these can be individually missing on a real
+					-- record, local or linked, not just absent outright.
+					local raw = Altoholic:ResolveLinkedChar(CurrentFaction, CurrentRealm, CurrentLinkedAccount, s.name)
+					local c = {
+						class = (raw and raw.class) or "",
+						race = (raw and raw.race) or "",
+						level = (raw and raw.level) or 1,
+						bags = (raw and raw.bags) or "",
+					}
 					local color = self:GetClassColor(c.class)
 				
 					getglobal(entry..i.."Collapse"):Hide()
@@ -117,13 +131,21 @@ function Altoholic_BagUsage_OnEnter(self)
 		return
 	end
 	
-	local Faction, Realm = Altoholic:GetCharacterInfo(line)
-	local c = Altoholic.db.account.data[Faction][Realm].char[s.name]
-	
+	local Faction, Realm, LinkedAccount = Altoholic:GetCharacterInfo(line)
+	local raw = Altoholic:ResolveLinkedChar(Faction, Realm, LinkedAccount, s.name)
+	if not raw then return end
+	local c = raw
+	if not c.bag then
+		-- Nothing to show slot-by-slot for a record with no bag table at
+		-- all (e.g. a stub/incomplete entry) -- the header alone would be
+		-- misleading without any of the slot math below it.
+		return
+	end
+
 	AltoTooltip:ClearLines();
 	AltoTooltip:SetOwner(self, "ANCHOR_RIGHT");
 	AltoTooltip:AddLine(Altoholic:GetClassColor(c.class) .. s.name,1,1,1);
-	AltoTooltip:AddLine(L["Level"] .. " " .. GREEN .. c.level .. " |r".. c.race .. " " .. c.class,1,1,1);
+	AltoTooltip:AddLine(L["Level"] .. " " .. GREEN .. (c.level or 1) .. " |r".. (c.race or "") .. " " .. (c.class or ""),1,1,1);
 	AltoTooltip:AddLine(" ",1,1,1);
 
 	local id = self:GetID()

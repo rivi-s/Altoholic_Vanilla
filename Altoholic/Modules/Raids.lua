@@ -85,7 +85,7 @@ function Altoholic:Raids_Update()
 	local DisplayedCount = 0
 	local VisibleCount = 0
 	local DrawRealm
-	local CurrentFaction, CurrentRealm
+	local CurrentFaction, CurrentRealm, CurrentLinkedAccount
 	local i=1
 	TotalLockouts = {}
 	for line, s in pairs(self.CharacterInfo) do
@@ -93,7 +93,8 @@ function Altoholic:Raids_Update()
 			if s.linetype == INFO_REALM_LINE then								-- then keep track of counters
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
-				if s.isCollapsed == false then
+				CurrentLinkedAccount = s.linkedAccount
+				if not s.isCollapsed then
 					DrawRealm = true
 				else
 					DrawRealm = false
@@ -112,16 +113,21 @@ function Altoholic:Raids_Update()
 			if s.linetype == INFO_REALM_LINE then
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
+				CurrentLinkedAccount = s.linkedAccount
 				TotalLockouts = {}
-				if s.isCollapsed == false then
-					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up"); 
+				if not s.isCollapsed then
+					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up");
 					DrawRealm = true
 				else
 					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-PlusButton-Up");
 					DrawRealm = false
 				end
 				getglobal(entry..i.."Collapse"):Show()
-				getglobal(entry..i.."Name"):SetText(self:GetFullRealmString(s.faction, s.realm))
+				local realmText = self:GetFullRealmString(s.faction, s.realm)
+				if s.linkedAccount then
+					realmText = realmText .. " (" .. s.linkedAccount .. ")"
+				end
+				getglobal(entry..i.."Name"):SetText(realmText)
 				getglobal(entry..i.."Name"):SetJustifyH("LEFT")
 				getglobal(entry..i.."Name"):SetPoint("TOPLEFT", 25, 0)
 				getglobal(entry..i.."Name"):SetWidth(100)
@@ -137,7 +143,11 @@ function Altoholic:Raids_Update()
 				DisplayedCount = DisplayedCount + 1
 			elseif DrawRealm then
 				if (s.linetype == INFO_CHARACTER_LINE) then
-					local c = self.db.account.data[CurrentFaction][CurrentRealm].char[s.name]
+					local raw = Altoholic:ResolveLinkedChar(CurrentFaction, CurrentRealm, CurrentLinkedAccount, s.name)
+					local c = {
+						class = (raw and raw.class) or "",
+						SavedInstance = raw and raw.SavedInstance,
+					}
 					local color = self:GetClassColor(c.class)
 					getglobal(entry..i.."Collapse"):Hide()
 					getglobal(entry..i.."Name"):SetText(color .. s.name)
@@ -145,7 +155,7 @@ function Altoholic:Raids_Update()
 					getglobal(entry..i.."Name"):SetPoint("TOPLEFT", 25, 0)
 					getglobal(entry..i.."Name"):SetWidth(100)
 					for _, raidname in pairs(RaidNames) do
-						getglobal(entry..i..raidname):SetText(getraidid(c.SavedInstance, raidname))
+						getglobal(entry..i..raidname):SetText(getraidid(c.SavedInstance or {}, raidname))
 					end
 				elseif (s.linetype == INFO_TOTAL_LINE) then
 					getglobal(entry..i.."Collapse"):Hide()
@@ -237,9 +247,10 @@ function Altoholic_Raid_OnEnter(self)
 	end
 
 	if s.linetype == INFO_CHARACTER_LINE then
-		local Faction, Realm = Altoholic:GetCharacterInfo(line)
-		local c = Altoholic.db.account.data[Faction][Realm].char[s.name]
-		for name, info in pairs(c.SavedInstance) do
+		local Faction, Realm, LinkedAccount = Altoholic:GetCharacterInfo(line)
+		local c = Altoholic:ResolveLinkedChar(Faction, Realm, LinkedAccount, s.name)
+		if not c then return end
+		for name, info in pairs(c.SavedInstance or {}) do
 			if (string.sub(name, 1, string.len(longname)) == longname) then
 				local id, reset, lastcheck = Altoholic:strsplit("|", info)
 				reset = tonumber(reset)

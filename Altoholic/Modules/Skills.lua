@@ -23,14 +23,15 @@ function Altoholic:Skills_Update()
 	local DisplayedCount = 0
 	local VisibleCount = 0
 	local DrawRealm
-	local CurrentFaction, CurrentRealm
+	local CurrentFaction, CurrentRealm, CurrentLinkedAccount
 	local i=1
 	for line, s in pairs(self.CharacterInfo) do
 		if (offset > 0) or (DisplayedCount >= VisibleLines) then		-- if the line will not be visible
 			if s.linetype == INFO_REALM_LINE then								-- then keep track of counters
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
-				if s.isCollapsed == false then
+				CurrentLinkedAccount = s.linkedAccount
+				if not s.isCollapsed then
 					DrawRealm = true
 				else
 					DrawRealm = false
@@ -45,15 +46,20 @@ function Altoholic:Skills_Update()
 			if s.linetype == INFO_REALM_LINE then
 				CurrentFaction = s.faction
 				CurrentRealm = s.realm
-				if s.isCollapsed == false then
-					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up"); 
+				CurrentLinkedAccount = s.linkedAccount
+				if not s.isCollapsed then
+					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up");
 					DrawRealm = true
 				else
 					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-PlusButton-Up");
 					DrawRealm = false
 				end
 				getglobal(entry..i.."Collapse"):Show()
-				getglobal(entry..i.."Name"):SetText(self:GetFullRealmString(s.faction, s.realm))
+				local realmText = self:GetFullRealmString(s.faction, s.realm)
+				if s.linkedAccount then
+					realmText = realmText .. " (" .. s.linkedAccount .. ")"
+				end
+				getglobal(entry..i.."Name"):SetText(realmText)
 				getglobal(entry..i.."Name"):SetJustifyH("LEFT")
 				getglobal(entry..i.."Name"):SetPoint("TOPLEFT", 25, 0)
 				getglobal(entry..i.."Name"):SetWidth(190)
@@ -73,7 +79,12 @@ function Altoholic:Skills_Update()
 				DisplayedCount = DisplayedCount + 1
 			elseif DrawRealm then
 				if (s.linetype == INFO_CHARACTER_LINE) then
-					local c = self.db.account.data[CurrentFaction][CurrentRealm].char[s.name]
+					local raw = Altoholic:ResolveLinkedChar(CurrentFaction, CurrentRealm, CurrentLinkedAccount, s.name)
+					local c = {
+						class = (raw and raw.class) or "",
+						race = (raw and raw.race) or "",
+						level = (raw and raw.level) or 1,
+					}
 					local color = self:GetClassColor(c.class)
 					getglobal(entry..i.."Collapse"):Hide()
 					getglobal(entry..i.."Name"):SetText(color .. s.name)
@@ -131,27 +142,35 @@ function Altoholic_Skill_OnEnter(self)
 	end
 	local id = self:GetID()
 	local skill, rank, suggestion
-	local Faction, Realm = Altoholic:GetCharacterInfo(line)
-	local c = Altoholic.db.account.data[Faction][Realm].char[s.name]
+	local Faction, Realm, LinkedAccount = Altoholic:GetCharacterInfo(line)
+	local c = Altoholic:ResolveLinkedChar(Faction, Realm, LinkedAccount, s.name)
+	if not c then return end
+	-- c.skill and its categories are optional sub-tables locally too (same
+	-- AceDB auto-vivify gap as elsewhere) -- read through safe local
+	-- aliases rather than mutate c itself, since c may be a direct
+	-- reference into Altoholic.LinkedAccounts.
+	local skillProfessions = (c.skill and c.skill[L["Professions"]]) or {}
+	local skillSecondary = (c.skill and c.skill[L["Secondary Skills"]]) or {}
+	local skillClass = (c.skill and c.skill["Class Skills"]) or {}
 	local curRank, maxRank
 	if id == 1 then
 		skill = s.skillName1
-		curRank, maxRank = Altoholic:GetSkillInfo( c.skill[L["Professions"]][skill] )
+		curRank, maxRank = Altoholic:GetSkillInfo( skillProfessions[skill] )
 	elseif id == 2 then
 		skill = s.skillName2
-		curRank, maxRank = Altoholic:GetSkillInfo( c.skill[L["Professions"]][skill] )
+		curRank, maxRank = Altoholic:GetSkillInfo( skillProfessions[skill] )
 	elseif id == 3 then
 		skill = BI["Cooking"]
-		curRank, maxRank = Altoholic:GetSkillInfo( c.skill[L["Secondary Skills"]][BI["Cooking"]] )
+		curRank, maxRank = Altoholic:GetSkillInfo( skillSecondary[BI["Cooking"]] )
 	elseif id == 4 then
 		skill = BI["First Aid"]
-		curRank, maxRank = Altoholic:GetSkillInfo( c.skill[L["Secondary Skills"]][BI["First Aid"]] )
+		curRank, maxRank = Altoholic:GetSkillInfo( skillSecondary[BI["First Aid"]] )
 	elseif id == 5 then
 		skill = BI["Fishing"]
-		curRank, maxRank = Altoholic:GetSkillInfo( c.skill[L["Secondary Skills"]][BI["Fishing"]] )
+		curRank, maxRank = Altoholic:GetSkillInfo( skillSecondary[BI["Fishing"]] )
 	elseif id == 6 then
 		skill = L["Riding"]
-		curRank, maxRank = Altoholic:GetSkillInfo( c.skill[L["Secondary Skills"]][L["Riding"]] )
+		curRank, maxRank = Altoholic:GetSkillInfo( skillSecondary[L["Riding"]] )
 	end
 	if (id >= 1) and (id <= 6) then
 		rank = Altoholic:GetSkillColor(curRank) .. curRank .. "/" .. maxRank
@@ -161,8 +180,8 @@ function Altoholic_Skill_OnEnter(self)
 			return
 		end
 		skill = L["Rogue Proficiencies"]
-		local curLock, maxLock = Altoholic:GetSkillInfo( c.skill["Class Skills"][L["Lockpicking"]] )
-		local curPois, maxPois = Altoholic:GetSkillInfo( c.skill["Class Skills"][L["Poisons"]] )
+		local curLock, maxLock = Altoholic:GetSkillInfo( skillClass[L["Lockpicking"]] )
+		local curPois, maxPois = Altoholic:GetSkillInfo( skillClass[L["Poisons"]] )
 		rank = TEAL .. L["Lockpicking"] .. " " .. curLock .. "/" .. maxLock .. "\n" 
 						.. L["Poisons"] .. " " .. curPois .. "/" .. maxPois
 		suggestion = Altoholic:GetSuggestion(L["Lockpicking"], curLock)

@@ -6,17 +6,22 @@ local GREEN		= "|cFF00FF00"
 local TEAL		= "|cFF00FF9A"
 
 function Altoholic:Quests_Update()
-	local c = self.db.account.data[V.CurrentFaction][V.CurrentRealm].char[V.CurrentAlt]
+	local raw = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
+	local c = { questlog = (raw and raw.questlog) or {} }
 	local VisibleLines = 14
 	local frame = "AltoQuests"
 	local entry = frame.."Entry"
+	local nameSuffix = ""
+	if V.CurrentLinkedAccount then
+		nameSuffix = " (" .. V.CurrentLinkedAccount .. ")"
+	end
 	if table.getn(c.questlog) == 0 then
-		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. "No quests found")
+		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. "No quests found")
 		getglobal("AltoholicFrame_Status"):Show()
 		self:ClearScrollFrame(getglobal(frame.."ScrollFrame"), entry, VisibleLines, 18)
 		return
 	else
-		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. " |cFFFFFFFF" .. QUEST_LOG)
+		getglobal("AltoholicFrame_Status"):SetText("|cFFFFD700" .. V.CurrentAlt .. " of ".. V.CurrentRealm .. nameSuffix .. " |cFFFFFFFF" .. QUEST_LOG)
 		getglobal("AltoholicFrame_Status"):Show()
 	end
 	local offset = FauxScrollFrame_GetOffset(getglobal(frame.."ScrollFrame"));
@@ -27,7 +32,7 @@ function Altoholic:Quests_Update()
 	for line, s in pairs(c.questlog) do
 		if (offset > 0) or (DisplayedCount >= VisibleLines) then
 			if s.isHeader then
-				if s.isCollapsed == false then
+				if not s.isCollapsed then
 					DrawGroup = true
 				else
 					DrawGroup = false
@@ -40,7 +45,7 @@ function Altoholic:Quests_Update()
 			end
 		else
 			if s.isHeader then
-				if s.isCollapsed == false then
+				if not s.isCollapsed then
 					getglobal(entry..i.."Collapse"):SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up"); 
 					DrawGroup = true
 				else
@@ -114,15 +119,14 @@ end
 function Altoholic:QuestLink_OnClick(button, id)
     if id == 0 then return end
     if ( button == "LeftButton" ) and ( IsShiftKeyDown() ) then
+        local v = Altoholic.vars
+        local c = Altoholic:ResolveLinkedChar(v.CurrentFaction, v.CurrentRealm, v.CurrentLinkedAccount, v.CurrentAlt)
+        local entry = c and c.questlog and c.questlog[id]
+        local link = entry and entry.link
+        if not link then return end
         if ( ChatFrameEditBox:IsShown() ) then
-            local v = Altoholic.vars
-            local link = self.db.account.data[v.CurrentFaction][v.CurrentRealm].char[v.CurrentAlt].questlog[id].link
-            if not link then return end
             ChatFrameEditBox:Insert(link);
         elseif (WIM_EditBoxInFocus) then
-            local v = Altoholic.vars
-            local link = self.db.account.data[v.CurrentFaction][v.CurrentRealm].char[v.CurrentAlt].questlog[id].link
-            if not link then return end
             WIM_EditBoxInFocus:Insert(link);
         end
     end
@@ -131,26 +135,33 @@ end
 function Altoholic:QuestLink_OnEnter(self)
 	local id = self:GetID()
 	if id == 0 then return end
-	local r = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm]
-    local title = r.char[V.CurrentAlt].questlog[id].title
-    local o = r.char[V.CurrentAlt].questlog[id]
+	local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
+	local o = c and c.questlog and c.questlog[id]
+	local title = o and o.title
 	if not title then return end
 	GameTooltip:ClearLines();
 	GameTooltip:SetOwner(self, "ANCHOR_RIGHT");
-    GameTooltip:AddLine("|cffffffff"..o.questObjectives.."|r",1,1,1,true);
-    local questTitle = title
-	local bOtherCharsOnQuest
-	for CharacterName, c in pairs(r.char) do
-		if CharacterName ~= V.CurrentAlt then
-			for index, q in pairs(c.questlog) do
-	            local altQuestTitle = q.title
-				if altQuestTitle == questTitle then
-					if not bOtherCharsOnQuest then
-						GameTooltip:AddLine(" ",1,1,1);
-						GameTooltip:AddLine(GREEN .. L["Are also on this quest:"],1,1,1);
-						bOtherCharsOnQuest = true
+    GameTooltip:AddLine("|cffffffff"..(o.questObjectives or "").."|r",1,1,1,true);
+	-- "Are also on this quest" only cross-references this account's own
+	-- local alts (self.db.account.data) -- doing the same for every linked
+	-- account's quest log too is a real feature, not a safe default here,
+	-- so it's simply skipped for a linked row rather than guessed at.
+	if not V.CurrentLinkedAccount then
+		local r = Altoholic.db.account.data[V.CurrentFaction][V.CurrentRealm]
+		local questTitle = title
+		local bOtherCharsOnQuest
+		for CharacterName, c2 in pairs(r.char) do
+			if CharacterName ~= V.CurrentAlt then
+				for index, q in pairs(c2.questlog or {}) do
+					local altQuestTitle = q.title
+					if altQuestTitle == questTitle then
+						if not bOtherCharsOnQuest then
+							GameTooltip:AddLine(" ",1,1,1);
+							GameTooltip:AddLine(GREEN .. L["Are also on this quest:"],1,1,1);
+							bOtherCharsOnQuest = true
+						end
+						GameTooltip:AddLine(Altoholic:GetClassColor(c2.class) .. CharacterName,1,1,1);
 					end
-					GameTooltip:AddLine(Altoholic:GetClassColor(c.class) .. CharacterName,1,1,1);
 				end
 			end
 		end
@@ -158,37 +169,106 @@ function Altoholic:QuestLink_OnEnter(self)
 	GameTooltip:Show();
 end
 
-function Altoholic:UpdateQuestLog()
-	local q = {}
-    q[0] = nil
+local function GetCurrentCharacter()
+	return Altoholic.db.account.data[V.faction][V.realm].char[UnitName("player")]
+end
+
+local function CaptureCollapsedQuestHeaders()
+	local collapsed = {}
+	for i = 1, GetNumQuestLogEntries() do
+		local title, _, _, isHeader, isCollapsed = GetQuestLogTitle(i)
+		if title and isHeader and isCollapsed then
+			collapsed[title] = true
+		end
+	end
+	return collapsed
+end
+
+local function RestoreCollapsedQuestHeaders(collapsed)
+	if not collapsed then return end
+	-- Work upward because collapsing a header changes the indices below it.
 	for i = GetNumQuestLogEntries(), 1, -1 do
-		local _, _, _, isHeader, isCollapsed = GetQuestLogTitle(i);
-		if isHeader and isCollapsed then
+		local title, _, _, isHeader, isCollapsed = GetQuestLogTitle(i)
+		if title and isHeader and collapsed[title] and not isCollapsed then
+			CollapseQuestHeader(i)
+		elseif title and isHeader and not collapsed[title] and isCollapsed then
 			ExpandQuestHeader(i)
 		end
 	end
+end
+
+local function RestoreQuestSelection(title)
+	if not title then return end
 	for i = 1, GetNumQuestLogEntries() do
-        q[i] = {}
-		local title, level, questTag, isHeader, _, isComplete = GetQuestLogTitle(i);
-        local questDescription, questObjectives = GetQuestLogQuestText();
+		local rowTitle, _, _, isHeader = GetQuestLogTitle(i)
+		if not isHeader and rowTitle == title then
+			SelectQuestLogEntry(i)
+			return
+		end
+	end
+end
+
+function Altoholic:SaveQuestLogCollapseState()
+	local c = GetCurrentCharacter()
+	if c then
+		c.questlogCollapsedHeaders = CaptureCollapsedQuestHeaders()
+	end
+end
+
+function Altoholic:UpdateQuestLog()
+	local c = GetCurrentCharacter()
+	if not c then return end
+
+	-- Restore the last saved layout once per login before taking a fresh
+	-- snapshot. Later scans preserve any changes made during this session.
+	if not self.questLogCollapseInitialized then
+		RestoreCollapsedQuestHeaders(c.questlogCollapsedHeaders)
+		self.questLogCollapseInitialized = true
+	end
+
+	local collapsedHeaders = CaptureCollapsedQuestHeaders()
+	c.questlogCollapsedHeaders = collapsedHeaders
+
+	local oldSelection = GetQuestLogSelection()
+	local selectedTitle
+	if oldSelection and oldSelection > 0 then
+		local title, _, _, isHeader = GetQuestLogTitle(oldSelection)
+		if title and not isHeader then selectedTitle = title end
+	end
+
+	-- Altoholic needs every quest visible while it creates its character
+	-- snapshot. Expand temporarily and restore the player's layout afterward.
+	for i = GetNumQuestLogEntries(), 1, -1 do
+		local _, _, _, isHeader, isCollapsed = GetQuestLogTitle(i)
+		if isHeader and isCollapsed then ExpandQuestHeader(i) end
+	end
+
+	local q = {}
+	for i = 1, GetNumQuestLogEntries() do
+		q[i] = {}
+		local title, level, questTag, isHeader, _, isComplete = GetQuestLogTitle(i)
 		if not isHeader then
+			-- Select the matching row before reading its text and reward data.
+			SelectQuestLogEntry(i)
+			local questDescription, questObjectives = GetQuestLogQuestText()
 			q[i].title = title
 			q[i].tag = questTag
 			q[i].isComplete = isComplete
-            q[i].link = "|cffffff00|Hquest:0:0:0:0|h["..title.."]|h|r"
-            q[i].tag = questTag
-            q[i].level = level
-            q[i].questDescription = questDescription
-            q[i].questObjectives = questObjectives
-			SelectQuestLogEntry(i);
-			q[i].money= GetQuestLogRewardMoney();
+			q[i].link = "|cffffff00|Hquest:0:0:0:0|h[" .. title .. "]|h|r"
+			q[i].level = level
+			q[i].questDescription = questDescription
+			q[i].questObjectives = questObjectives
+			q[i].money = GetQuestLogRewardMoney()
 		else
 			q[i].name = title
 			q[i].isHeader = true
-            q[i].isCollapsed = false
+			q[i].isCollapsed = collapsedHeaders[title] and true or false
 		end
 	end
-    self.db.account.data[V.faction][V.realm].char[UnitName("player")].questlog = q
+
+	RestoreQuestSelection(selectedTitle)
+	RestoreCollapsedQuestHeaders(collapsedHeaders)
+	c.questlog = q
 end
 
 function Altoholic:SuggestGroupSize(tag, level)
