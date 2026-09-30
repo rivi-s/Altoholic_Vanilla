@@ -2080,7 +2080,12 @@ function Altoholic:WhoKnowsRecipe(tooltip, ttype)
     if Altoholic:RecipeOrBook(ttname) == "isBook" then
         local ttuse = getglobal(ttype..'TooltipTextLeft4'):GetText()
         local spellName, reqClass, reqLevel
-        if string.find(ttuse, "%sTeaches") and not string.find(getglobal(ttype..'TooltipTextLeft4'):GetText(), USED) then
+        -- RecipeOrBook only substring-matches the title against known
+        -- recipe/book name patterns, so anything else with a matching
+        -- word in its name (a quest title, say) gets misclassified as
+        -- "isBook" too. A real recipe/manual always has this 4th tooltip
+        -- line; anything else won't, so bail out instead of indexing nil.
+        if ttuse and string.find(ttuse, "%sTeaches") and not string.find(getglobal(ttype..'TooltipTextLeft4'):GetText(), USED) then
             _, _, spellName = string.find(ttuse, ".*Teaches%s(.+%s%(.+%))")
             _, _, reqClass = string.find(getglobal(ttype..'TooltipTextLeft2'):GetText(), string.gsub(ITEM_CLASSES_ALLOWED,"%%s","(.+)"))
             _, _, reqLevel = string.find(getglobal(ttype..'TooltipTextLeft3'):GetText(), string.gsub(ITEM_MIN_LEVEL,"%%d","(.+)"))
