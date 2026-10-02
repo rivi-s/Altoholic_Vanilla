@@ -152,51 +152,61 @@ function Altoholic_BagUsage_OnEnter(self)
 	local numSlots
 	local numFree = 0
 	
+	-- Every size/freeslots read below goes through "or 0": AceDB strips a
+	-- field equal to its default (0) when saving, so a linked account's
+	-- plain deserialized copy reads back nil for any empty/zero value, and
+	-- a bag slot that was never stored at all is simply absent.
 	if id == 1 then		-- 1 for player bags, 2 for bank bags
-		AltoTooltip:AddLine(GOLD .. "16 |r" .. L["slots"] .. " (" .. GREEN 
-			.. c.bag["Bag0"].freeslots .. "|r " .. L["free"] .. ") [" .. BACKPACK_TOOLTIP .. "]",1,1,1);
-				
+		local bag0 = c.bag["Bag0"] or {}
+		local bag0Free = bag0.freeslots or 0
+		AltoTooltip:AddLine(GOLD .. "16 |r" .. L["slots"] .. " (" .. GREEN
+			.. bag0Free .. "|r " .. L["free"] .. ") [" .. BACKPACK_TOOLTIP .. "]",1,1,1);
+
 		numSlots = 16
-		numFree = c.bag["Bag0"].freeslots
+		numFree = bag0Free
 		for i = 1, 4 do
 			local b = c.bag["Bag"..i]
-			if b.link ~= nil then
+			if b and b.link ~= nil then
 				local bag
-				if (b.bagtype == 0) then
+				if (b.bagtype == nil) or (b.bagtype == 0) then
 					bag = ""
 				else
 					bag = YELLOW .. "(" .. Altoholic:GetBagTypeString(b.bagtype) .. ")"
 				end
 
-				AltoTooltip:AddLine(GOLD .. b.size .. " |r" .. L["slots"] .. " ("  .. GREEN
-						.. b.freeslots ..  "|r " ..L["free"] .. ") " .. b.link .. " " .. bag ,1,1,1);
-				numSlots = numSlots + b.size
-				numFree = numFree + b.freeslots
+				AltoTooltip:AddLine(GOLD .. (b.size or 0) .. " |r" .. L["slots"] .. " ("  .. GREEN
+						.. (b.freeslots or 0) ..  "|r " ..L["free"] .. ") " .. b.link .. " " .. bag ,1,1,1);
+				numSlots = numSlots + (b.size or 0)
+				numFree = numFree + (b.freeslots or 0)
 			end
-		end	
+		end
 	elseif (c.bankslots == nil) or (c.bankslots == "") then
 		AltoTooltip:AddLine(L["Bank not visited yet"],1,1,1);
-		AltoTooltip:Show();	
+		AltoTooltip:Show();
 		return
 	else
-		AltoTooltip:AddLine(GOLD .. "28 |r" .. L["slots"] .. " (" .. GREEN 
-						.. c.bag["Bag100"].freeslots ..  "|r " .. L["free"] .. ") [" .. L["Bank"] .. "]",1,1,1);
-		numSlots = 28
-		numFree = c.bag["Bag100"].freeslots
-		for i = 5, 11 do
+		local bank = c.bag["Bag100"] or {}
+		local bankSize = Altoholic:GetStoredBankSize(bank)
+		local bankFree = bank.freeslots or 0
+		AltoTooltip:AddLine(GOLD .. bankSize .. " |r" .. L["slots"] .. " (" .. GREEN
+						.. bankFree ..  "|r " .. L["free"] .. ") [" .. L["Bank"] .. "]",1,1,1);
+		numSlots = bankSize
+		numFree = bankFree
+		local firstBankBag, lastBankBag = Altoholic:GetBankBagRange()
+		for i = firstBankBag, lastBankBag do
 			local b = c.bag["Bag"..i]
-			if b.link ~= nil then
+			if b and b.link ~= nil then
 				local bag
-				if (b.bagtype == 0) then
+				if (b.bagtype == nil) or (b.bagtype == 0) then
 					bag = ""
 				else
 					bag = YELLOW .. "(" .. Altoholic:GetBagTypeString(b.bagtype) .. ")"
 				end
-			
-				AltoTooltip:AddLine(GOLD .. b.size .. " |r" .. L["slots"] .. " ("  .. GREEN
-						.. b.freeslots ..  "|r " ..L["free"] .. ") " .. b.link .. " " .. bag ,1,1,1);
-				numSlots = numSlots + b.size
-				numFree = numFree + b.freeslots
+
+				AltoTooltip:AddLine(GOLD .. (b.size or 0) .. " |r" .. L["slots"] .. " ("  .. GREEN
+						.. (b.freeslots or 0) ..  "|r " ..L["free"] .. ") " .. b.link .. " " .. bag ,1,1,1);
+				numSlots = numSlots + (b.size or 0)
+				numFree = numFree + (b.freeslots or 0)
 			end
 		end
 	end

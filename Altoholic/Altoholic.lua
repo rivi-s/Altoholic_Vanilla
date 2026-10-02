@@ -771,18 +771,47 @@ function Altoholic:UpdateKeyRing()
 	self:PopulateContainer(-2)
 end
 
+-- Bank layout comes from the client, not from hardcoded numbers. Bank bag
+-- slots have container IDs NUM_BAG_SLOTS+1 .. NUM_BAG_SLOTS+NUM_BANKBAGSLOTS
+-- (5..10 on a stock 1.12 client), and the main bank holds
+-- NUM_BANKGENERIC_SLOTS items (24 on a stock 1.12 client -- the old
+-- hardcoded 28 was a TBC-era number, and the four extra "slots" it read
+-- were really the first four bank bag slots).
+function Altoholic:GetBankBagRange()
+	local first = (NUM_BAG_SLOTS or 4) + 1
+	return first, first + (NUM_BANKBAGSLOTS or 6) - 1
+end
+
+function Altoholic:GetMainBankSize()
+	local size = NUM_BANKGENERIC_SLOTS
+	if not size or size <= 0 then size = GetContainerNumSlots(-1) end
+	if not size or size <= 0 then size = 24 end
+	return size
+end
+
+-- Size to display for a character's stored main bank. Data saved before the
+-- 24-slot fix says 28 and carries the bank bags as phantom items in slots
+-- 25-28; capping to the real size hides those until the bank is rescanned.
+function Altoholic:GetStoredBankSize(bank)
+	local mainSize = self:GetMainBankSize()
+	local size = bank and bank.size
+	if not size or size <= 0 or size > mainSize then size = mainSize end
+	return size
+end
+
 function Altoholic:UpdateContainerCache()
 	local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
 	Altoholic.BagIndices = {}
 	if not c then return end
-	for bagID = 0, 10 do
+	local _, lastBankBag = self:GetBankBagRange()
+	for bagID = 0, lastBankBag do
 		if c.bag["Bag"..bagID] ~= nil then
-			self:UpdateBagIndices(bagID, c.bag["Bag"..bagID].size)
+			self:UpdateBagIndices(bagID, c.bag["Bag"..bagID].size or 0)
 		end
 	end
 	self:UpdateBagIndices(-2, 32)
 	if c.bag["Bag100"] ~= nil then
-		self:UpdateBagIndices(100, 28)
+		self:UpdateBagIndices(100, self:GetStoredBankSize(c.bag["Bag100"]))
 	end
 end
 
@@ -804,29 +833,33 @@ function Altoholic:UpdatePlayerBank(scanBags)
 		scanBags = true
 	end
 	local c = self.db.account.data[V.faction][V.realm].char[V.player]
+	local bankSize = self:GetMainBankSize()
 	if scanBags then
-		local nTotalSlots = 28
-		c.bankslots = "28/"
-		for bagID = 5, 10 do
+		local firstBankBag, lastBankBag = self:GetBankBagRange()
+		local nTotalSlots = bankSize
+		c.bankslots = bankSize .. "/"
+		for bagID = firstBankBag, lastBankBag do
 			self:UpdatePlayerBag(bagID)
 			local nSlots = GetContainerNumSlots(bagID)
 			nTotalSlots = nTotalSlots + nSlots
 			c.bankslots = c.bankslots .. WHITE .. nSlots
-			if bagID ~= 11 then
+			if bagID ~= lastBankBag then
 				c.bankslots = c.bankslots .. "|r/"
 			end
 		end
 		c.bankslots = c.bankslots .. " |r(|cFF00FF00" .. nTotalSlots .. "|r)"
 	end
 	local b = c.bag["Bag100"]
-	b.size = 28
-	for slotID = 40, 67 do
-		local index = slotID-39
+	b.size = bankSize
+	local used = 0
+	for index = 1, bankSize do
+		local slotID = index + 39
 		b.ids[index] = nil
 		b.counts[index] = nil
 		b.links[index] = nil
 		local link = GetInventoryItemLink("player", slotID)
 		if link ~= nil then
+			used = used + 1
 			b.ids[index] = self:GetIDFromLink(link)
 			if self:GetEnchantInfo(link) then
 				b.links[index] = link
@@ -837,6 +870,15 @@ function Altoholic:UpdatePlayerBank(scanBags)
 			end
 		end
 	end
+	-- Earlier scans assumed 28 slots and so stored whatever sat in the first
+	-- four bank *bag* slots (the bags themselves) as main-bank contents;
+	-- clear anything left over past the real size.
+	for index = bankSize + 1, 28 do
+		b.ids[index] = nil
+		b.counts[index] = nil
+		b.links[index] = nil
+	end
+	b.freeslots = bankSize - used
 end
 
 function Altoholic:UpdateRaidTimers()
@@ -2403,10 +2445,16 @@ function Altoholic:BAG_UPDATE(bag)
 		self:UpdatePlayerBag(bag)
 	elseif bag == -2 then
 		self:UpdateKeyRing()
-	elseif bag >= 5 and bag <= 11 then
-		if V.isBankOpen then self:UpdatePlayerBank(false) end
-		return
 	else
+		-- A bank bag's contents changed: re-read that bag. This used to call
+		-- UpdatePlayerBank(false), which only re-reads the main bank, so no
+		-- bank bag was ever updated after the single scan done when the bank
+		-- opened -- anything moved in or out afterwards (or not yet loaded
+		-- at that first scan) stayed wrong.
+		local firstBankBag, lastBankBag = self:GetBankBagRange()
+		if bag >= firstBankBag and bag <= lastBankBag and V.isBankOpen then
+			self:UpdatePlayerBag(bag)
+		end
 		return
 	end
 
@@ -2417,6 +2465,7 @@ function Altoholic:BANKFRAME_OPENED()
     self:UpdatePlayerBank()
 	V.isBankOpen = true
 	self:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+	self:RegisterEvent("PLAYERBANKBAGSLOTS_CHANGED")
 end
 
 function Altoholic:BANKFRAME_CLOSED()
@@ -2424,8 +2473,17 @@ function Altoholic:BANKFRAME_CLOSED()
 	if self:IsEventRegistered("PLAYERBANKSLOTS_CHANGED") then
 		self:UnregisterEvent("PLAYERBANKSLOTS_CHANGED")
 	end
+	if self:IsEventRegistered("PLAYERBANKBAGSLOTS_CHANGED") then
+		self:UnregisterEvent("PLAYERBANKBAGSLOTS_CHANGED")
+	end
 end
 
 function Altoholic:PLAYERBANKSLOTS_CHANGED()
 	self:UpdatePlayerBank(false)
+end
+
+-- A bank bag was bought, equipped, swapped or removed: sizes and bag links
+-- changed, so rescan every bank bag (and rebuild the bankslots summary).
+function Altoholic:PLAYERBANKBAGSLOTS_CHANGED()
+	self:UpdatePlayerBank()
 end

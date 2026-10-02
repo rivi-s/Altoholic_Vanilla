@@ -106,7 +106,10 @@ function Altoholic:Item_OnEnter(this, bagID, itemID)
 
         elseif bagID == 100 then
             GameTooltip:AddLine(L["Bank"],0.5,0.5,1);
-            GameTooltip:AddLine(L["28 Slot"],1,1,1);
+            -- Every locale spells the slot count out as "28"; swap in the
+            -- stored bank's real size rather than claim 28 on a 24-slot bank.
+            local slotText = string.gsub(L["28 Slot"], "28", tostring(Altoholic:GetStoredBankSize(c.bag["Bag100"])))
+            GameTooltip:AddLine(slotText,1,1,1);
         else
             local bagLink = c.bag["Bag" .. bagID] and c.bag["Bag" .. bagID].link
             if bagLink then
