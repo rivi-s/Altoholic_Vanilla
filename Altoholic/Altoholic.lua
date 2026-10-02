@@ -803,8 +803,11 @@ function Altoholic:UpdateContainerCache()
 	local c = Altoholic:ResolveLinkedChar(V.CurrentFaction, V.CurrentRealm, V.CurrentLinkedAccount, V.CurrentAlt)
 	Altoholic.BagIndices = {}
 	if not c then return end
-	local _, lastBankBag = self:GetBankBagRange()
-	for bagID = 0, lastBankBag do
+	local firstBankBag, lastBankBag = self:GetBankBagRange()
+	-- Carried bags and keyring first, then the bank: the main bank, with the
+	-- bank bags listed underneath it (they used to be listed straight after
+	-- the carried bags, with the main bank last).
+	for bagID = 0, firstBankBag - 1 do
 		if c.bag["Bag"..bagID] ~= nil then
 			self:UpdateBagIndices(bagID, c.bag["Bag"..bagID].size or 0)
 		end
@@ -812,6 +815,11 @@ function Altoholic:UpdateContainerCache()
 	self:UpdateBagIndices(-2, 32)
 	if c.bag["Bag100"] ~= nil then
 		self:UpdateBagIndices(100, self:GetStoredBankSize(c.bag["Bag100"]))
+	end
+	for bagID = firstBankBag, lastBankBag do
+		if c.bag["Bag"..bagID] ~= nil then
+			self:UpdateBagIndices(bagID, c.bag["Bag"..bagID].size or 0)
+		end
 	end
 end
 
